@@ -22,7 +22,7 @@ from argparse import ArgumentParser as ArgParser, Namespace
 
 class HTTPStats:
 
-    __slots__ = ("_jobs", "_url_list", "_path", "_verbose", "_redirect")
+    __slots__ = ("_jobs", "_url_list", "_path", "_verbose", "_redirect", "_progress")
 
     def __init__(self):
         self._jobs     : int      = 5
@@ -30,6 +30,7 @@ class HTTPStats:
         self._path     : str      = ""
         self._verbose  : bool     = False
         self._redirect : bool     = False
+        self._progress : Progress = None
 
 
 
@@ -37,10 +38,10 @@ class HTTPStats:
         try:
             self._get_args()
             asyncio.run(self._scan())
-        
+
         except KeyboardInterrupt:
             print("\nProcess stopped by the user")
-        
+
         except Exception as e:
             fatal(f"Unknown error: {e}")
 
@@ -59,8 +60,11 @@ class HTTPStats:
 
 
     async def _scan(self):
-        semaphore = asyncio.Semaphore(self._jobs)        
+        semaphore = asyncio.Semaphore(self._jobs)
         timeout   = aiohttp.ClientTimeout(total=3)
+        
+        self._progress  = Progress(len(self._url_list))
+        self._progress.render()
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             tasks = [
@@ -70,24 +74,29 @@ class HTTPStats:
 
             await asyncio.gather(*tasks)
 
+        self._progress.finish()
+
 
 
     async def _check_url_task(self, session: aiohttp.ClientSession, u: str, semaphore: asyncio.Semaphore):
         url = self._format_url(u)
-        
+
         async with semaphore:
             try:
                 async with session.get(url, allow_redirects=self._redirect) as response:
                     await self.display_response(response)
 
             except asyncio.TimeoutError:
-                self.display_warning(f"Timeout: {url}")
-            
+                await self.display_warning(f"Timeout: {url}")
+
             except aiohttp.ClientError as e:
-                self.display_warning(f"Connection err: {type(e).__name__}")
-            
+                await self.display_warning(f"Connection err: {type(e).__name__}")
+
             except Exception as e:
-                self.display_warning(f"Unexpected err: {e}")
+                await self.display_warning(f"Unexpected err: {e}")
+
+            finally:
+                await self._progress.advance()
 
 
 
@@ -120,7 +129,7 @@ class HTTPStats:
 
         z = " \033[34mHTML\033[0m " if HTTPStats.is_html(response) else ' '
 
-        print(f"[{x}]{z}{str(response.url)}", flush=True)
+        await self._progress.log(f"[{x}]{z}{str(response.url)}")
 
 
 
@@ -130,12 +139,12 @@ class HTTPStats:
             "Content-Type" in response.headers
             and "text/html" in response.headers["Content-Type"]
         )
-    
 
 
-    def display_warning(self, text: str):
+
+    async def display_warning(self, text: str):
         if self._verbose:
-            print(f"[\033[33m{'!!!'}\033[0m] {text}", flush=True)
+            await self._progress.log(f"[\033[33m{'!!!'}\033[0m] {text}")
 
 
 
@@ -172,22 +181,22 @@ class Parser:
 
         self._parser.add_argument("-f", "--file", type=str, default="", help="TXT file with domain list")
         self._parser.add_argument("-u", "--url",  type=str, default="", help="Check only one URL")
-        
+
         self._parser.add_argument(
-            "-r", "--redirect", default=False, action="store_true", 
+            "-r", "--redirect", default=False, action="store_true",
             help="Allow redirection"
         )
-        
+
         self._parser.add_argument(
-            "-j", "--jobs", type=int, default=5, 
+            "-j", "--jobs", type=int, default=5,
             help="Number of parallel jobs to run (DEFAULT: 5)"
         )
-        
+
         self._parser.add_argument(
             "-v", "--verbose", default=False, action="store_true",
             help="Display all status message (DEFAULT: Only 200 and 300)"
         )
-        
+
         self._parser.add_argument(
             "-p", "--path", type=str, default="",
             help="URL path to check on each domain (e.g., '/.git' or '/robots.txt')"
@@ -206,12 +215,12 @@ class Parser:
             return {self._args.url}
 
         file_path = Path(self._args.file)
-        
+
         if not file_path.is_file():
             self.fatal(f"The {self._args.file} is not a file")
 
         urls = {linha.strip() for linha in file_path.read_text().splitlines() if linha.strip()}
-        
+
         return urls
 
 
@@ -239,6 +248,46 @@ class Parser:
 
 
 
+class Progress:
+
+    __slots__ = ("_total", "_done", "_lock")
+
+    def __init__(self, total: int):
+        self._total = total
+        self._done  = 0
+        self._lock  = asyncio.Lock()
+
+
+
+    def render(self):
+        sys.stdout.write(f"\r\033[K[...] Scanning {self._done}/{self._total}")
+        sys.stdout.flush()
+
+
+
+    async def advance(self):
+        async with self._lock:
+            self._done += 1
+            self.render()
+
+
+
+    async def log(self, message: str):
+        async with self._lock:
+            sys.stdout.write("\r\033[K")
+            print(message, flush=True)
+            self.render()
+
+
+
+    def finish(self):
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+
+
+
+
+
 def fatal(text: str):
     print(f"[\033[31m{'ERR'}\033[0m] {text}")
     sys.exit(1)
@@ -247,5 +296,8 @@ def fatal(text: str):
 
 
 if __name__ == "__main__":
-    httpstats = HTTPStats()
-    httpstats.run()
+    try:
+        httpstats = HTTPStats()
+        httpstats.run()
+    except:
+        ...
