@@ -102,7 +102,6 @@ class HTTPStats:
 
     def _format_url(self, url: str) -> str:
         url = url.rstrip("/")
-        url = url.rstrip(self._path)
 
         if not url.startswith("https://") and not url.startswith("http://"):
             url = f"https://{url}"
@@ -110,6 +109,7 @@ class HTTPStats:
         if not self._path:
             return url
 
+        url  = url.removesuffix(self._path)
         path = self._path.strip("/")
 
         return f"{url}/{path}"
