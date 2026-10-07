@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-import asyncio
 import aiohttp
+import asyncio
+import sys
+import re
 from pathlib  import Path
 from argparse import ArgumentParser as ArgParser, Namespace
 
@@ -22,15 +23,16 @@ from argparse import ArgumentParser as ArgParser, Namespace
 
 class HTTPStats:
 
-    __slots__ = ("_jobs", "_url_list", "_path", "_verbose", "_redirect", "_progress")
+    __slots__ = ("_jobs", "_url_list", "_path", "_verbose", "_redirect", "_progress", "_pattern")
 
     def __init__(self):
         self._jobs     : int      = 5
         self._url_list : set[str] = None
         self._path     : str      = ""
-        self._verbose  : bool     = False
-        self._redirect : bool     = False
+        self._pattern  : str      = ""
         self._progress : Progress = None
+        self._redirect : bool     = False
+        self._verbose  : bool     = False
 
 
 
@@ -56,6 +58,7 @@ class HTTPStats:
         self._path     = parser.get_path()
         self._verbose  = parser.get_verbose()
         self._redirect = parser.get_redirect()
+        self._pattern  = parser.get_pattern()
 
 
 
@@ -63,7 +66,7 @@ class HTTPStats:
         semaphore = asyncio.Semaphore(self._jobs)
         timeout   = aiohttp.ClientTimeout(total=3)
         
-        self._progress  = Progress(len(self._url_list))
+        self._progress = Progress(len(self._url_list), self._jobs)
         self._progress.render()
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
@@ -129,7 +132,19 @@ class HTTPStats:
 
         z = " \033[34mHTML\033[0m " if HTTPStats.is_html(response) else ' '
 
-        await self._progress.log(f"[{x}]{z}{str(response.url)}")
+        line = f"[{x}]{z}{str(response.url)}"
+
+        if self._pattern != "":
+            line = self._highlight_terms(line)
+
+        await self._progress.log(line)
+
+
+
+    YELLOW = r"\033[33m\g<0>\033[0m"
+
+    def _highlight_terms(self, text: str) -> str:
+        return re.sub(self._pattern, self.YELLOW, text, flags=re.IGNORECASE)
 
 
 
@@ -202,6 +217,12 @@ class Parser:
             help="URL path to check on each domain (e.g., '/.git' or '/robots.txt')"
         )
 
+        self._parser.add_argument(
+            "-s", "--seach", type=str, default="",
+            help="One or more terms to search and highlight in yellow (e.g., term1,term2)"
+        )
+
+
 
 
     def get_url_list(self) -> set[str]:
@@ -246,13 +267,25 @@ class Parser:
 
 
 
+    def get_pattern(self) -> str:
+        if self._args.seach == "":
+            return ""
+        
+        terms         = self._args.seach.split(",")
+        escaped_terms = [re.escape(term) for term in terms]
+        
+        return r"(" + "|".join(escaped_terms) + r")"
+
+
+
 
 
 class Progress:
 
-    __slots__ = ("_total", "_done", "_lock")
+    __slots__ = ("_total", "_done", "_lock", "_jobs")
 
-    def __init__(self, total: int):
+    def __init__(self, total: int, jobs: int):
+        self._jobs  = jobs
         self._total = total
         self._done  = 0
         self._lock  = asyncio.Lock()
@@ -260,7 +293,7 @@ class Progress:
 
 
     def render(self):
-        sys.stdout.write(f"\r\033[K[...] Scanning {self._done}/{self._total}")
+        sys.stdout.write(f"\r\033[K[...] Scanning with {self._jobs} jobs {self._done}/{self._total}")
         sys.stdout.flush()
 
 
