@@ -122,7 +122,9 @@ class HTTPStats:
     async def display_response(self, response: aiohttp.ClientResponse):
         code = response.status
 
-        if not self._verbose and code >= 400:
+        await self._progress.update_stats(code)
+
+        if not self._verbose and code >= 300:
             return
 
         if   code >= 400 : x = f"\033[31m{code}\033[0m"   # red
@@ -130,7 +132,7 @@ class HTTPStats:
         elif code >= 200 : x = f"\033[32m{code}\033[0m"   # green
         else             : x = f"{code}"
 
-        z = " \033[34mHTML\033[0m " if HTTPStats.is_html(response) else ' '
+        z = " \033[34mHTML\033[0m " if self.is_html(response) else ' '
 
         line = f"[{x}]{z}{str(response.url)}"
 
@@ -158,8 +160,10 @@ class HTTPStats:
 
 
     async def display_warning(self, text: str):
+        await self._progress.update_stats(None)
+
         if self._verbose:
-            await self._progress.log(f"[\033[33m{'!!!'}\033[0m] {text}")
+            await self._progress.log(f"[!!!] {text}")
 
 
 
@@ -282,18 +286,32 @@ class Parser:
 
 class Progress:
 
-    __slots__ = ("_total", "_done", "_lock", "_jobs")
+    __slots__ = ("_total", "_done", "_lock", "_jobs", "_code2XX", "_code3XX", "_code4XX", "_errs")
 
     def __init__(self, total: int, jobs: int):
-        self._jobs  = jobs
-        self._total = total
-        self._done  = 0
         self._lock  = asyncio.Lock()
+        self._jobs    : int = jobs
+        self._total   : int = total
+        self._done    : int = 0
+        self._code2XX : int = 0
+        self._code3XX : int = 0
+        self._code4XX : int = 0
+        self._errs    : int = 0
 
+
+    FLAG_4XX = "\033[31m4XX\033[0m"   # red
+    FLAG_3XX = "\033[33m3XX\033[0m"   # orange
+    FLAG_2XX = "\033[32m2XX\033[0m"   # green
 
 
     def render(self):
-        sys.stdout.write(f"\r\033[K[...] Scanning with {self._jobs} jobs {self._done}/{self._total}")
+        line = f"\033[K[...] Scanning with {self._jobs} jobs {self._done}/{self._total}"
+        line = f"{line} - [{self.FLAG_2XX}]: {self._code2XX}"
+        line = f"{line} - [{self.FLAG_3XX}]: {self._code3XX}"
+        line = f"{line} - [{self.FLAG_4XX}]: {self._code4XX}"
+        line = f"{line} - [ERR]: {self._errs}"
+
+        sys.stdout.write(f"\r{line}")
         sys.stdout.flush()
 
 
@@ -310,6 +328,14 @@ class Progress:
             sys.stdout.write("\r\033[K")
             print(message, flush=True)
             self.render()
+
+
+
+    async def update_stats(self, code: int | None):
+        if not code: self._errs += 1
+        elif code >= 400: self._code4XX += 1
+        elif code >= 300: self._code3XX += 1
+        elif code >= 200: self._code2XX += 1
 
 
 
