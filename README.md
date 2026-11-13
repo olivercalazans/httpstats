@@ -12,7 +12,6 @@ A pre-built static binary for Linux x86-64 is available on the Releases page (ht
 
 ```bash
 curl -L -o httpstats https://github.com/olivercalazans/httpstats/releases/download/latest/httpstats
-
 chmod +x httpstats
 ```
 
@@ -20,7 +19,7 @@ chmod +x httpstats
 For any other platform (macOS, Windows, Linux ARM, etc.), or if you prefer to build from source, clone the project and compile it with Go:
 
 ```bash
-git clone https://github.com/Oliver-Calazans-Jeronimo/httpstats
+git clone https://github.com/olivercalazans/httpstats.git
 cd httpstats
 go build -o httpstats
 ```
