@@ -1,4 +1,2 @@
+httpstats
 *.txt
-!requirements.txt
-venv/
-doms/
